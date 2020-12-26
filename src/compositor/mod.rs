@@ -18,17 +18,20 @@ pub mod texture;
 pub use self::texture::Texture;
 
 use super::*;
+use std::mem::MaybeUninit;
 
 impl Compositor {
     pub fn vulkan_instance_extensions_required(&self) -> Vec<CString> {
-        let temp = unsafe {
+        if let Some(temp) = unsafe {
             get_string(|ptr, n| self.0.GetVulkanInstanceExtensionsRequired.unwrap()(ptr, n))
+        }{
+            temp.as_bytes()
+                .split(|&x| x == b' ')
+                .map(|x| CString::new(x.to_vec()).expect("extension name contained null byte"))
+                .collect()
+        } else{
+            vec![]
         }
-        .unwrap();
-        temp.as_bytes()
-            .split(|&x| x == b' ')
-            .map(|x| CString::new(x.to_vec()).expect("extension name contained null byte"))
-            .collect()
     }
 
     /// Safety: physical_device must be a valid VkPhysicalDevice
@@ -36,14 +39,16 @@ impl Compositor {
         &self,
         physical_device: *mut VkPhysicalDevice_T,
     ) -> Vec<CString> {
-        let temp = get_string(|ptr, n| {
+        if let Some(temp) = get_string(|ptr, n| {
             self.0.GetVulkanDeviceExtensionsRequired.unwrap()(physical_device, ptr, n)
-        })
-        .unwrap();
-        temp.as_bytes()
-            .split(|&x| x == b' ')
-            .map(|x| CString::new(x.to_vec()).expect("extension name contained null byte"))
-            .collect()
+        }) {
+            temp.as_bytes()
+                .split(|&x| x == b' ')
+                .map(|x| CString::new(x.to_vec()).expect("extension name contained null byte"))
+                .collect()
+        } else{
+            vec![]
+        }
     }
 
     /// Sets tracking space returned by WaitGetPoses
@@ -57,15 +62,15 @@ impl Compositor {
     /// Poses are relative to the origin set by `set_tracking_space`.
     pub fn wait_get_poses(&self) -> Result<WaitPoses, CompositorError> {
         unsafe {
-            let mut result: WaitPoses = mem::uninitialized();
+            let mut result: MaybeUninit<WaitPoses> = mem::MaybeUninit::uninit();
             let e = self.0.WaitGetPoses.unwrap()(
-                result.render.as_mut().as_mut_ptr() as *mut _,
-                result.render.len() as u32,
-                result.game.as_mut().as_mut_ptr() as *mut _,
-                result.game.len() as u32,
+                (*result.as_mut_ptr()).render.as_mut().as_mut_ptr() as *mut _,
+                (*result.as_mut_ptr()).render.len() as u32,
+                (*result.as_mut_ptr()).game.as_mut().as_mut_ptr() as *mut _,
+                (*result.as_mut_ptr()).game.len() as u32,
             );
             if e == sys::EVRCompositorError_VRCompositorError_None {
-                Ok(result)
+                Ok(result.assume_init())
             } else {
                 Err(CompositorError(e))
             }

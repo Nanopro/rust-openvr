@@ -12,6 +12,7 @@ pub mod event;
 use super::*;
 
 pub use self::event::{Event, EventInfo};
+use std::mem::MaybeUninit;
 
 impl System {
     /// Provides the game with the minimum size that it should use for its offscreen render target to minimize pixel
@@ -19,7 +20,7 @@ impl System {
     /// to display depending on resolution, distortion, and field of view.
     pub fn recommended_render_target_size(&self) -> (u32, u32) {
         unsafe {
-            let mut result: (u32, u32) = mem::uninitialized();
+            let mut result: (u32, u32) = (0, 0);
             self.0.GetRecommendedRenderTargetSize.unwrap()(&mut result.0, &mut result.1);
             result
         }
@@ -37,7 +38,12 @@ impl System {
     /// compute its own matrix.
     pub fn projection_raw(&self, eye: Eye) -> RawProjection {
         unsafe {
-            let mut result: RawProjection = mem::uninitialized();
+            let mut result: RawProjection = RawProjection{
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0
+            };
             self.0.GetProjectionRaw.unwrap()(
                 eye as sys::EVREye,
                 &mut result.left,
@@ -62,7 +68,7 @@ impl System {
     /// None.
     pub fn time_since_last_vsync(&self) -> Option<(f32, u64)> {
         unsafe {
-            let mut result: (f32, u64) = mem::uninitialized();
+            let mut result: (f32, u64) = (0.0, 0);
             if self.0.GetTimeSinceLastVsync.unwrap()(&mut result.0, &mut result.1) {
                 Some(result)
             } else {
@@ -91,14 +97,14 @@ impl System {
         predicted_seconds_to_photons_from_now: f32,
     ) -> TrackedDevicePoses {
         unsafe {
-            let mut result: TrackedDevicePoses = mem::uninitialized();
+            let mut result: MaybeUninit<TrackedDevicePoses> = mem::MaybeUninit::uninit();
             self.0.GetDeviceToAbsoluteTrackingPose.unwrap()(
                 origin as sys::ETrackingUniverseOrigin,
                 predicted_seconds_to_photons_from_now,
-                result.as_mut().as_mut_ptr() as *mut _,
-                result.len() as u32,
+                result.as_mut_ptr() as *mut _,
+                MAX_TRACKED_DEVICE_COUNT as u32,
             );
-            result
+            result.assume_init()
         }
     }
 
@@ -123,17 +129,17 @@ impl System {
         &self,
         origin: TrackingUniverseOrigin,
     ) -> Option<(EventInfo, TrackedDevicePose)> {
-        let mut event = unsafe { mem::uninitialized() };
-        let mut pose = unsafe { mem::uninitialized() };
+        let mut event = unsafe { mem::MaybeUninit::uninit() };
+        let mut pose = unsafe { mem::MaybeUninit::uninit() };
         if unsafe {
             self.0.PollNextEventWithPose.unwrap()(
                 origin as sys::ETrackingUniverseOrigin,
-                &mut event,
-                mem::size_of_val(&event) as u32,
-                &mut pose as *mut _ as *mut _,
+                event.as_mut_ptr(),
+                mem::size_of::<sys::VREvent_t>() as u32,
+                pose.as_mut_ptr() as *mut _ as *mut _,
             )
         } {
-            Some((event.into(), pose))
+            unsafe{ Some(( event.assume_init().into(), pose.assume_init())) }
         } else {
             None
         }
@@ -142,14 +148,14 @@ impl System {
     /// Computes the distortion caused by the optics
     /// Gets the result of a single distortion value for use in a distortion map. Input UVs are in a single eye's viewport, and output UVs are for the source render target in the distortion shader.
     pub fn compute_distortion(&self, eye: Eye, u: f32, v: f32) -> Option<DistortionCoordinates> {
-        let mut coord = unsafe { mem::uninitialized() };
+        let mut coord = unsafe { mem::MaybeUninit::uninit() };
         let success =
-            unsafe { self.0.ComputeDistortion.unwrap()(eye as sys::EVREye, u, v, &mut coord) };
+            unsafe { self.0.ComputeDistortion.unwrap()(eye as sys::EVREye, u, v, coord.as_mut_ptr()) };
 
         if !success {
             return None;
         }
-
+        let coord = unsafe { coord.assume_init() };
         Some(DistortionCoordinates {
             red: coord.rfRed,
             blue: coord.rfBlue,
@@ -163,7 +169,7 @@ impl System {
         role: TrackedControllerRole,
     ) -> Option<TrackedDeviceIndex> {
         let x = unsafe {
-            self.0.GetTrackedDeviceIndexForControllerRole.unwrap()(
+            self.0.GetTrackedDeviceIndexForControllerRole?(
                 role as sys::ETrackedControllerRole,
             )
         };
@@ -196,7 +202,7 @@ impl System {
         instance: *mut VkInstance_T,
     ) -> Option<*mut VkPhysicalDevice_T> {
         unsafe {
-            let mut device = mem::uninitialized();
+            let mut device = 0;
             self.0.GetOutputDevice.unwrap()(
                 &mut device,
                 sys::ETextureType_TextureType_Vulkan,
@@ -216,7 +222,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<bool, TrackedPropertyError> {
         unsafe {
-            let mut error: TrackedPropertyError = mem::uninitialized();
+            let mut error: TrackedPropertyError = TrackedPropertyError(0);
             let r = self.0.GetBoolTrackedDeviceProperty.unwrap()(device, property, &mut error.0);
             if error == tracked_property_error::SUCCESS {
                 Ok(r)
@@ -232,7 +238,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<f32, TrackedPropertyError> {
         unsafe {
-            let mut error: TrackedPropertyError = mem::uninitialized();
+            let mut error: TrackedPropertyError = TrackedPropertyError(0);
             let r = self.0.GetFloatTrackedDeviceProperty.unwrap()(device, property, &mut error.0);
             if error == tracked_property_error::SUCCESS {
                 Ok(r)
@@ -248,7 +254,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<i32, TrackedPropertyError> {
         unsafe {
-            let mut error: TrackedPropertyError = mem::uninitialized();
+            let mut error: TrackedPropertyError = TrackedPropertyError(0);
             let r = self.0.GetInt32TrackedDeviceProperty.unwrap()(device, property, &mut error.0);
             if error == tracked_property_error::SUCCESS {
                 Ok(r)
@@ -264,7 +270,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<u64, TrackedPropertyError> {
         unsafe {
-            let mut error: TrackedPropertyError = mem::uninitialized();
+            let mut error: TrackedPropertyError = TrackedPropertyError(0);
             let r = self.0.GetUint64TrackedDeviceProperty.unwrap()(device, property, &mut error.0);
             if error == tracked_property_error::SUCCESS {
                 Ok(r)
@@ -280,7 +286,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<[[f32; 4]; 3], TrackedPropertyError> {
         unsafe {
-            let mut error: TrackedPropertyError = mem::uninitialized();
+            let mut error: TrackedPropertyError = TrackedPropertyError(0);
             let r =
                 self.0.GetMatrix34TrackedDeviceProperty.unwrap()(device, property, &mut error.0);
             if error == tracked_property_error::SUCCESS {
@@ -297,7 +303,7 @@ impl System {
         property: TrackedDeviceProperty,
     ) -> Result<CString, TrackedPropertyError> {
         unsafe {
-            let mut error = mem::uninitialized();
+            let mut error = 0;
             let res = get_string(|ptr, n| {
                 self.0.GetStringTrackedDeviceProperty.unwrap()(device, property, ptr, n, &mut error)
             });
@@ -341,13 +347,13 @@ impl System {
     /// API.
     pub fn controller_state(&self, device: TrackedDeviceIndex) -> Option<ControllerState> {
         unsafe {
-            let mut state = mem::uninitialized();
+            let mut state = mem::MaybeUninit::uninit();
             if self.0.GetControllerState.unwrap()(
                 device,
-                &mut state as *mut _ as *mut _,
+                state.as_mut_ptr() as *mut _ as *mut _,
                 mem::size_of_val(&state) as u32,
             ) {
-                Some(state)
+                Some(state.assume_init())
             } else {
                 None
             }
@@ -361,16 +367,16 @@ impl System {
         device: TrackedDeviceIndex,
     ) -> Option<(ControllerState, TrackedDevicePose)> {
         unsafe {
-            let mut state = mem::uninitialized();
-            let mut pose = mem::uninitialized();
+            let mut state = mem::MaybeUninit::uninit();
+            let mut pose = mem::MaybeUninit::uninit();
             if self.0.GetControllerStateWithPose.unwrap()(
                 origin as sys::ETrackingUniverseOrigin,
                 device,
-                &mut state as *mut _ as *mut _,
+                state.as_mut_ptr() as *mut _ as *mut _,
                 mem::size_of_val(&state) as u32,
-                &mut pose,
+                pose.as_mut_ptr(),
             ) {
-                Some((state, pose.into()))
+                Some((state.assume_init(), pose.assume_init().into()))
             } else {
                 None
             }
